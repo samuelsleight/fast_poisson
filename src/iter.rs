@@ -104,7 +104,8 @@ where
 
     /// Returns true if the point is within the bounds of our space.
     ///
-    /// This is true if 0 ≤ point[i] < dimensions[i]
+    /// This is true if 0 ≤ point[i] < dimensions[i].
+    /// Any wrapping dimensions are treateda s always in bounds, and will be sensibly handled by the other logic
     fn in_space(&self, point: Point<N>) -> bool {
         point
             .iter()
@@ -114,6 +115,7 @@ where
 
     /// Returns true if there is at least one other sample point within `radius` of this point
     fn in_neighborhood(&self, point: Point<N>) -> bool {
+        // First, check if we can return early
         if !self
             .sampled
             .within::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
@@ -121,6 +123,10 @@ where
         {
             return true;
         }
+
+        // If not, we might need to check a few different points depending on any wrapping dimensions
+        // For any wrapping dimension, we want to check the original point and the point with that dimension wrapped.
+        // When there are multiple wrapping dimensions, we essentially need the powerset of all dimensions that are wrapping
 
         let mut points = Vec::with_capacity(N ^ 2);
         points.push(point);
@@ -151,6 +157,11 @@ where
         return false;
     }
 
+    /// Returns the value of a point potentially outside the bounds wrapped back into the bounds
+    ///
+    /// When dimensions are wrapping, we may end up with a valid point up to `2 * radius` outside of the bounds
+    /// of a wrapping dimension. This method ensures that we convert those to thir representations within the bounds
+    /// such that the set of points we return to the user are all normalised
     fn wrap_point(&self, mut point: Point<N>) -> Point<N> {
         for (value, dimension) in point.iter_mut().zip(self.distribution.dimensions.iter()) {
             if dimension.wrapping {
@@ -183,9 +194,8 @@ where
                 // Ensure we've picked a point inside the bounds of our rectangle, and more than `radius`
                 // distance from any other sampled point
                 if self.in_space(point) && !self.in_neighborhood(point) {
-                    let point = self.wrap_point(point);
-
                     // We've got a good one!
+                    let point = self.wrap_point(point);
                     self.add_point(point);
 
                     return Some(point);

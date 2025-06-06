@@ -164,6 +164,7 @@ pub(crate) mod inner_types {
 
     /// The floating-point type
     pub(crate) type Float = f32;
+
     /// The default PRNG
     pub(crate) type Rand = rand_xoshiro::Xoshiro128StarStar;
 }
@@ -172,7 +173,10 @@ use inner_types::*;
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "derive_serde", derive(Serialize, Deserialize))]
 pub(crate) struct Dim {
+    /// The size of this dimension
     magnitude: Float,
+
+    /// Whether this dimension wraps around
     wrapping: bool,
 }
 
@@ -275,6 +279,24 @@ where
         self
     }
 
+    /// Specify whether any of the dimensions in this distrubution wrap around
+    ///
+    /// By default, the dimensions are assumed to not wrap. A point close to the edge of a dimension
+    /// (close to 0 or close to that diemensions magnitude as set by [`with_dimensions`][Self::with_dimensions])
+    /// will only check the radius inside the bounds themselves for neighbours. Any portions of the radius
+    /// circle that are outside the bounds will be essentially ignore.
+    ///
+    /// If a diemension is set to wrap, those ignored radius bounds are instead wrapped around to the other end
+    /// of the dimensions extent. As an example, given the following definition:
+    /// ```
+    /// # use fast_poisson::Poisson2D;
+    /// let mut points = Poisson2D::new()
+    ///     .with_dimensions([50.0, 50.0], 10.0)
+    ///     .with_wrapping([true, false]);
+    /// ```
+    /// The points `[1, 20]` and `[49, 20]` would be rejected as too close
+    ///
+    /// See also [`set_wrapping`][Self::set_wrapping].
     #[must_use]
     pub fn with_wrapping(mut self, wrapping: [bool; N]) -> Self {
         self.set_wrapping(wrapping);
@@ -341,6 +363,9 @@ where
         self.radius = radius;
     }
 
+    /// Specify whether any of the dimensions in this distrubution wrap around
+    ///
+    /// For more see [`with_wrapping`][Self::with_wrapping].
     pub fn set_wrapping(&mut self, wrapping: [bool; N]) {
         for (dimension, wrapping) in self.dimensions.iter_mut().zip(wrapping) {
             dimension.wrapping = wrapping;
