@@ -114,7 +114,16 @@ where
 
     /// Returns true if there is at least one other sample point within `radius` of this point
     fn in_neighborhood(&self, point: Point<N>) -> bool {
-        let mut points = vec![point];
+        if !self
+            .sampled
+            .within::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
+            .is_empty()
+        {
+            return true;
+        }
+
+        let mut points = Vec::with_capacity(N ^ 2);
+        points.push(point);
 
         for (index, dim) in self.distribution.dimensions.iter().enumerate() {
             if dim.wrapping {
@@ -127,16 +136,19 @@ where
                     } else {
                         point[index] -= dim.magnitude;
                     }
+
+                    if !self
+                        .sampled
+                        .within::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
+                        .is_empty()
+                    {
+                        return true;
+                    }
                 }
             }
         }
 
-        points.into_iter().any(|point| {
-            !self
-                .sampled
-                .within::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
-                .is_empty()
-        })
+        return false;
     }
 
     fn wrap_point(&self, mut point: Point<N>) -> Point<N> {
