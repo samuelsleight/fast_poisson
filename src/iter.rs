@@ -52,7 +52,7 @@ where
             // Start somewhere near the middle, but still randomly distributed
             // Fixes #34 by avoiding cases where we start near an edge/corner and happen to only generate
             // samples outside of our boundaries (because we only have ~25% chance of picking one inside)
-            *i = (1.5 - rng.random::<Float>()) * dim / 2.0;
+            *i = (1.5 - rng.random::<Float>()) * dim.magnitude / 2.0;
         }
 
         Iter {
@@ -109,15 +109,48 @@ where
         point
             .iter()
             .zip(self.distribution.dimensions.iter())
-            .all(|(p, d)| *p >= 0. && p < d)
+            .all(|(p, d)| d.wrapping || (*p >= 0. && *p < d.magnitude))
     }
 
     /// Returns true if there is at least one other sample point within `radius` of this point
     fn in_neighborhood(&self, point: Point<N>) -> bool {
-        !self
-            .sampled
-            .within::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
-            .is_empty()
+        let mut points = vec![point];
+
+        for (index, dim) in self.distribution.dimensions.iter().enumerate() {
+            if dim.wrapping {
+                let current_total = points.len();
+                points.extend_from_within(..current_total);
+
+                for point in &mut points[current_total..] {
+                    if point[index] <= (dim.magnitude / 2.) {
+                        point[index] += dim.magnitude;
+                    } else {
+                        point[index] -= dim.magnitude;
+                    }
+                }
+            }
+        }
+
+        points.into_iter().any(|point| {
+            !self
+                .sampled
+                .within::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
+                .is_empty()
+        })
+    }
+
+    fn wrap_point(&self, mut point: Point<N>) -> Point<N> {
+        for (value, dimension) in point.iter_mut().zip(self.distribution.dimensions.iter()) {
+            if dimension.wrapping {
+                if *value < 0. {
+                    *value += dimension.magnitude;
+                } else if *value > dimension.magnitude {
+                    *value -= dimension.magnitude;
+                }
+            }
+        }
+
+        point
     }
 }
 
@@ -138,6 +171,8 @@ where
                 // Ensure we've picked a point inside the bounds of our rectangle, and more than `radius`
                 // distance from any other sampled point
                 if self.in_space(point) && !self.in_neighborhood(point) {
+                    let point = self.wrap_point(point);
+
                     // We've got a good one!
                     self.add_point(point);
 

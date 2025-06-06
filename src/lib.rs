@@ -154,6 +154,7 @@ pub(crate) mod inner_types {
 
     /// The floating-point type
     pub(crate) type Float = f64;
+
     /// The default PRNG
     pub(crate) type Rand = rand_xoshiro::Xoshiro256StarStar;
 }
@@ -167,6 +168,22 @@ pub(crate) mod inner_types {
     pub(crate) type Rand = rand_xoshiro::Xoshiro128StarStar;
 }
 use inner_types::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "derive_serde", derive(Serialize, Deserialize))]
+pub(crate) struct Dim {
+    magnitude: Float,
+    wrapping: bool,
+}
+
+impl Default for Dim {
+    fn default() -> Self {
+        Self {
+            magnitude: 1.0,
+            wrapping: false,
+        }
+    }
+}
 
 /// Poisson disk distribution in N dimensions
 ///
@@ -203,7 +220,7 @@ where
 {
     /// Dimensions of the box
     #[cfg_attr(feature = "derive_serde", serde(with = "serde_arrays"))]
-    dimensions: [Float; N],
+    dimensions: [Dim; N],
     /// Radius around each point that must remain empty
     radius: Float,
     /// Seed to use for the internal RNG
@@ -254,6 +271,13 @@ where
     #[must_use]
     pub fn with_dimensions(mut self, dimensions: [Float; N], radius: Float) -> Self {
         self.set_dimensions(dimensions, radius);
+
+        self
+    }
+
+    #[must_use]
+    pub fn with_wrapping(mut self, wrapping: [bool; N]) -> Self {
+        self.set_wrapping(wrapping);
 
         self
     }
@@ -310,8 +334,17 @@ where
     ///
     /// For more see [`with_dimensions`][Self::with_dimensions].
     pub fn set_dimensions(&mut self, dimensions: [Float; N], radius: Float) {
-        self.dimensions = dimensions;
+        for (dimension, magnitude) in self.dimensions.iter_mut().zip(dimensions) {
+            dimension.magnitude = magnitude;
+        }
+
         self.radius = radius;
+    }
+
+    pub fn set_wrapping(&mut self, wrapping: [bool; N]) {
+        for (dimension, wrapping) in self.dimensions.iter_mut().zip(wrapping) {
+            dimension.wrapping = wrapping;
+        }
     }
 
     /// Specify the PRNG seed for this distribution
@@ -467,7 +500,7 @@ where
 {
     fn default() -> Self {
         Self {
-            dimensions: [1.0; N],
+            dimensions: [Default::default(); N],
             radius: 0.1,
             seed: None,
             num_samples: 30,
