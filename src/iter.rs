@@ -72,7 +72,31 @@ where
         self.active.push(point);
 
         // Now stash this point in our samples
-        self.sampled.add(&point, 0);
+        // For wrapping to work, we need to add the point itself
+        // as well as wrapped representations of it for each wrapping dimension
+        let mut points = Vec::with_capacity(N ^ 2);
+        points.push((point, 0));
+
+        for (index, dim) in self
+            .distribution
+            .dimensions
+            .iter()
+            .enumerate()
+            .filter(|(_, dim)| dim.wrapping)
+        {
+            let current_total = points.len();
+            points.extend_from_within(..current_total);
+
+            for (point, _) in &mut points[current_total..] {
+                if point[index] <= (dim.magnitude / 2.) {
+                    point[index] += dim.magnitude;
+                } else {
+                    point[index] -= dim.magnitude;
+                }
+            }
+        }
+
+        self.sampled.extend(points);
     }
 
     /// Generate a random point between `radius` and `2 * radius` away from the given point
@@ -105,7 +129,7 @@ where
     /// Returns true if the point is within the bounds of our space.
     ///
     /// This is true if 0 ≤ point[i] < dimensions[i].
-    /// Any wrapping dimensions are treateda s always in bounds, and will be sensibly handled by the other logic
+    /// Any wrapping dimensions are treated as always in bounds, and will be sensibly handled by the other logic
     fn in_space(&self, point: Point<N>) -> bool {
         point
             .iter()
@@ -115,46 +139,10 @@ where
 
     /// Returns true if there is at least one other sample point within `radius` of this point
     fn in_neighborhood(&self, point: Point<N>) -> bool {
-        // First, check if we can return early
-        if !self
+        !self
             .sampled
-            .within::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
+            .within_unsorted::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
             .is_empty()
-        {
-            return true;
-        }
-
-        // If not, we might need to check a few different points depending on any wrapping dimensions
-        // For any wrapping dimension, we want to check the original point and the point with that dimension wrapped.
-        // When there are multiple wrapping dimensions, we essentially need the powerset of all dimensions that are wrapping
-
-        let mut points = Vec::with_capacity(N ^ 2);
-        points.push(point);
-
-        for (index, dim) in self.distribution.dimensions.iter().enumerate() {
-            if dim.wrapping {
-                let current_total = points.len();
-                points.extend_from_within(..current_total);
-
-                for point in &mut points[current_total..] {
-                    if point[index] <= (dim.magnitude / 2.) {
-                        point[index] += dim.magnitude;
-                    } else {
-                        point[index] -= dim.magnitude;
-                    }
-
-                    if !self
-                        .sampled
-                        .within::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
-                        .is_empty()
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        return false;
     }
 
     /// Returns the value of a point potentially outside the bounds wrapped back into the bounds
