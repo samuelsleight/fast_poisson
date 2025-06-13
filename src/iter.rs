@@ -5,9 +5,8 @@
 // https://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-use crate::Rand;
+use super::{Float, Poisson, Radius, Rand};
 
-use super::{Float, Poisson};
 use kiddo::{float::distance::SquaredEuclidean, KdTree};
 use rand::prelude::*;
 use rand_distr::StandardNormal;
@@ -20,26 +19,31 @@ mod tests;
 pub type Point<const N: usize> = [Float; N];
 
 /// An iterator over the points in the Poisson disk distribution
-pub struct Iter<const N: usize, R = Rand>
+pub struct Iter<const N: usize, RadiusFn, R = Rand>
 where
+    RadiusFn: Radius<N>,
     R: Rng + SeedableRng,
 {
     /// The distribution from which this iterator was built
-    distribution: Poisson<N, R>,
+    distribution: Poisson<N, RadiusFn, R>,
     /// The RNG
     rng: R,
     /// All previously-selected samples, to ensure new samples maintain minimum radius
     sampled: KdTree<Float, N>,
+    /// The maximum radius we've seen so far, for querying the sampled points
+    max_radius: Float,
+    radii: Vec<Float>,
     /// A list of valid points that we have not yet visited
     active: Vec<Point<N>>,
 }
 
-impl<const N: usize, R> Iter<N, R>
+impl<const N: usize, RadiusFn, R> Iter<N, RadiusFn, R>
 where
+    RadiusFn: Radius<N>,
     R: Rng + SeedableRng,
 {
     /// Create an iterator over the specified distribution
-    pub(crate) fn new(distribution: Poisson<N, R>) -> Self {
+    pub(crate) fn new(distribution: Poisson<N, RadiusFn, R>) -> Self {
         // If we were not given a seed, generate one non-deterministically
         let mut rng = match distribution.seed {
             None => R::from_os_rng(),
@@ -47,18 +51,26 @@ where
         };
 
         // We have to generate an initial point, just to ensure we've got *something* in the active list
-        let mut first_point = [0.0; N];
-        for (i, dim) in first_point.iter_mut().zip(distribution.dimensions.iter()) {
-            // Start somewhere near the middle, but still randomly distributed
-            // Fixes #34 by avoiding cases where we start near an edge/corner and happen to only generate
-            // samples outside of our boundaries (because we only have ~25% chance of picking one inside)
-            *i = (1.5 - rng.random::<Float>()) * dim.magnitude / 2.0;
-        }
+        let first_point = loop {
+            let mut first_point = [0.0; N];
+            for (i, dim) in first_point.iter_mut().zip(distribution.dimensions.iter()) {
+                // Start somewhere near the middle, but still randomly distributed
+                // Fixes #34 by avoiding cases where we start near an edge/corner and happen to only generate
+                // samples outside of our boundaries (because we only have ~25% chance of picking one inside)
+                *i = (1.5 - rng.random::<Float>()) * dim.magnitude / 2.0;
+            }
+
+            if distribution.radius.radius(first_point).is_some() {
+                break first_point;
+            }
+        };
 
         Iter {
             distribution,
             rng,
             sampled: KdTree::new(),
+            max_radius: 0.,
+            radii: Vec::new(),
             // Add our initial point to `active`, to give us somewhere to start, but don't add it to
             // `sampled` since this initial point never gets returned, creating a void in the output.
             // See #36
@@ -67,7 +79,7 @@ where
     }
 
     /// Add a point to our pattern
-    fn add_point(&mut self, point: Point<N>) {
+    fn add_point(&mut self, point: Point<N>, radius: Float) {
         // Add it to the active list
         self.active.push(point);
 
@@ -75,7 +87,7 @@ where
         // For wrapping to work, we need to add the point itself
         // as well as wrapped representations of it for each wrapping dimension
         let mut points = Vec::with_capacity(N ^ 2);
-        points.push((point, 0));
+        points.push((point, self.radii.len() as u64));
 
         for (index, dim) in self
             .distribution
@@ -97,12 +109,15 @@ where
         }
 
         self.sampled.extend(points);
+        self.radii.push(radius);
+        self.max_radius = Float::max(self.max_radius, *self.radii.last().unwrap());
     }
 
     /// Generate a random point between `radius` and `2 * radius` away from the given point
     fn generate_random_point(&mut self, around: Point<N>) -> Point<N> {
         // Pick a random distance away from our point
-        let dist = self.distribution.radius * (1.0 + self.rng.random::<Float>());
+        let dist =
+            self.distribution.radius.radius(around).unwrap() * (1.0 + self.rng.random::<Float>());
 
         // Generate a randomly distributed vector
         let mut vector: [Float; N] = [0.0; N];
@@ -138,11 +153,16 @@ where
     }
 
     /// Returns true if there is at least one other sample point within `radius` of this point
-    fn in_neighborhood(&self, point: Point<N>) -> bool {
-        !self
-            .sampled
-            .within_unsorted::<SquaredEuclidean>(&point, self.distribution.radius.powi(2))
-            .is_empty()
+    fn in_neighborhood(&self, point: Point<N>, radius: Float) -> bool {
+        let max = Float::max(self.max_radius, radius);
+
+        self.sampled
+            .within_unsorted::<SquaredEuclidean>(&point, max)
+            .into_iter()
+            .any(|potential| {
+                potential.distance < radius
+                    || potential.distance < self.radii[potential.item as usize]
+            })
     }
 
     /// Returns the value of a point potentially outside the bounds wrapped back into the bounds
@@ -165,8 +185,9 @@ where
     }
 }
 
-impl<const N: usize, R> Iterator for Iter<N, R>
+impl<const N: usize, RadiusFn, R> Iterator for Iter<N, RadiusFn, R>
 where
+    RadiusFn: Radius<N>,
     R: Rng + SeedableRng,
 {
     type Item = Point<N>;
@@ -180,11 +201,17 @@ where
                 let point = self.generate_random_point(self.active[i]);
                 let point = self.wrap_point(point);
 
+                let radius = if let Some(radius) = self.distribution.radius.radius(point) {
+                    radius.powi(2)
+                } else {
+                    continue;
+                };
+
                 // Ensure we've picked a point inside the bounds of our rectangle, and more than `radius`
                 // distance from any other sampled point
-                if self.in_space(point) && !self.in_neighborhood(point) {
+                if self.in_space(point) && !self.in_neighborhood(point, radius) {
                     // We've got a good one!
-                    self.add_point(point);
+                    self.add_point(point, radius);
 
                     return Some(point);
                 }
@@ -197,4 +224,4 @@ where
     }
 }
 
-impl<const N: usize> FusedIterator for Iter<N> {}
+impl<const N: usize, RadiusFn> FusedIterator for Iter<N, RadiusFn> where RadiusFn: Radius<N> {}

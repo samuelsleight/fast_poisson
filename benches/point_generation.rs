@@ -26,6 +26,15 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 .generate()
         })
     });
+
+    c.bench_function("Large Poisson2D", |b| {
+        b.iter(|| {
+            Poisson2D::new()
+                .with_dimensions([1000.0, 1000.0], 5.0)
+                .with_seed(black_box(seed))
+                .generate()
+        })
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);

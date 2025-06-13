@@ -189,6 +189,25 @@ impl Default for Dim {
     }
 }
 
+pub trait Radius<const N: usize> {
+    fn radius(&self, point: Point<N>) -> Option<Float>;
+}
+
+impl<const N: usize> Radius<N> for Float {
+    fn radius(&self, _: Point<N>) -> Option<Float> {
+        Some(*self)
+    }
+}
+
+impl<const N: usize, RadiusFn> Radius<N> for RadiusFn
+where
+    RadiusFn: Fn(Point<N>) -> Option<Float>,
+{
+    fn radius(&self, point: Point<N>) -> Option<Float> {
+        (self)(point)
+    }
+}
+
 /// Poisson disk distribution in N dimensions
 ///
 /// Distributions can be generated for any non-negative number of dimensions, although performance
@@ -207,7 +226,7 @@ impl Default for Dim {
 /// // Use SplitMix64 instead of the default PRNG
 /// // This is actually a poor choice, but illustrates the feature
 /// # // More importantly, it avoids adding another dependency
-/// let points = Poisson::<2, SplitMix64>::new().generate();
+/// let points = Poisson::<2, _, SplitMix64>::new().generate();
 /// ```
 ///
 /// # Equality
@@ -216,17 +235,17 @@ impl Default for Dim {
 /// even the same object will be different. That is, the equality of two `Poisson`s is based not on
 /// whether or not they were built with the same parameters, but rather on whether or not they will
 /// produce the same results once the distribution is generated.
-#[derive(Debug)]
 #[cfg_attr(feature = "derive_serde", derive(Serialize, Deserialize))]
-pub struct Poisson<const N: usize, R = Rand>
+pub struct Poisson<const N: usize, RadiusFn = Float, R = Rand>
 where
+    RadiusFn: Radius<N>,
     R: Rng + SeedableRng,
 {
     /// Dimensions of the box
     #[cfg_attr(feature = "derive_serde", serde(with = "serde_arrays"))]
     dimensions: [Dim; N],
     /// Radius around each point that must remain empty
-    radius: Float,
+    radius: RadiusFn,
     /// Seed to use for the internal RNG
     seed: Option<u64>,
     /// Number of samples to generate and test around each point
@@ -235,7 +254,7 @@ where
     _rng: PhantomData<R>,
 }
 
-impl<const N: usize, R> Poisson<N, R>
+impl<const N: usize, R> Poisson<N, Float, R>
 where
     R: Rng + SeedableRng,
 {
@@ -248,7 +267,13 @@ where
     pub fn new() -> Self {
         Self::default()
     }
+}
 
+impl<const N: usize, RadiusFn, R> Poisson<N, RadiusFn, R>
+where
+    RadiusFn: Radius<N>,
+    R: Rng + SeedableRng,
+{
     /// Specify the space to be filled and the radius around each point
     ///
     /// To generate a 2-dimensional distribution in a 5×5 square, with no points closer than 1:
@@ -273,10 +298,24 @@ where
     ///
     /// See also [`set_dimensions`][Self::set_dimensions].
     #[must_use]
-    pub fn with_dimensions(mut self, dimensions: [Float; N], radius: Float) -> Self {
-        self.set_dimensions(dimensions, radius);
+    pub fn with_dimensions<NewRadiusFn: Radius<N>>(
+        self,
+        dimensions: [Float; N],
+        radius: NewRadiusFn,
+    ) -> Poisson<N, NewRadiusFn, R> {
+        let mut new = Poisson::<N, NewRadiusFn, R> {
+            dimensions: self.dimensions,
+            radius,
+            seed: self.seed,
+            num_samples: self.num_samples,
+            _rng: PhantomData,
+        };
 
-        self
+        for (dimension, magnitude) in new.dimensions.iter_mut().zip(dimensions) {
+            dimension.magnitude = magnitude;
+        }
+
+        new
     }
 
     /// Specify whether any of the dimensions in this distrubution wrap around
@@ -355,7 +394,7 @@ where
     /// ```
     ///
     /// For more see [`with_dimensions`][Self::with_dimensions].
-    pub fn set_dimensions(&mut self, dimensions: [Float; N], radius: Float) {
+    pub fn set_dimensions(&mut self, dimensions: [Float; N], radius: RadiusFn) {
         for (dimension, magnitude) in self.dimensions.iter_mut().zip(dimensions) {
             dimension.magnitude = magnitude;
         }
@@ -414,8 +453,8 @@ where
     /// }
     /// ```
     #[must_use]
-    pub fn iter(&self) -> Iter<N, R> {
-        Iter::new(self.clone())
+    pub fn iter(self) -> Iter<N, RadiusFn, R> {
+        Iter::new(self)
     }
 
     /// Generate the points in this Poisson distribution, collected into a [`Vec`](std::vec::Vec).
@@ -423,26 +462,7 @@ where
     /// Note that this method does *not* consume the `Poisson`, so you can call it multiple times
     /// to generate multiple `Vec`s; if you have specified a seed, each one will be identical,
     /// whereas they will each be unique if you have not (see [`Poisson::set_seed`]).
-    ///
-    /// ```
-    /// # use fast_poisson::Poisson2D;
-    /// let mut poisson = Poisson2D::new();
-    ///
-    /// let points1 = poisson.generate();
-    /// let points2 = poisson.generate();
-    ///
-    /// // These are not identical because no seed was specified
-    /// assert!(points1.iter().zip(points2.iter()).any(|(a, b)| a != b));
-    ///
-    /// poisson.set_seed(1337);
-    ///
-    /// let points3 = poisson.generate();
-    /// let points4 = poisson.generate();
-    ///
-    /// // These are identical because a seed was specified
-    /// assert!(points3.iter().zip(points4.iter()).all(|(a, b)| a == b));
-    /// ```
-    pub fn generate(&self) -> Vec<Point<N>> {
+    pub fn generate(self) -> Vec<Point<N>> {
         self.iter().collect()
     }
 
@@ -483,7 +503,7 @@ where
     ///
     /// let points: Vec<Point> = Poisson2D::new().to_vec();
     /// ```
-    pub fn to_vec<T>(&self) -> Vec<T>
+    pub fn to_vec<T>(self) -> Vec<T>
     where
         T: From<[Float; N]>,
     {
@@ -491,35 +511,7 @@ where
     }
 }
 
-/// Note that without a specified seed, a cloned `Poisson` will *not* generate
-/// the same output!
-// We have to specify manually since we don't stipulate `R: Clone` as that's not
-// necessary (we don't actually clone `R`, we don't even *have* `R`!)
-impl<const N: usize, R> Clone for Poisson<N, R>
-where
-    R: Rng + SeedableRng,
-{
-    fn clone(&self) -> Self {
-        Self { ..*self }
-    }
-}
-
-/// No object is equal, not even to itself, if the seed is unspecified
-impl<const N: usize, R> PartialEq for Poisson<N, R>
-where
-    R: Rng + SeedableRng,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.seed.is_some()
-            && other.seed.is_some()
-            && self.dimensions == other.dimensions
-            && self.radius == other.radius
-            && self.seed == other.seed
-            && self.num_samples == other.num_samples
-    }
-}
-
-impl<const N: usize, R> Default for Poisson<N, R>
+impl<const N: usize, R> Default for Poisson<N, Float, R>
 where
     R: Rng + SeedableRng,
 {
@@ -534,37 +526,27 @@ where
     }
 }
 
-impl<const N: usize, R> IntoIterator for Poisson<N, R>
+impl<const N: usize, RadiusFn, R> IntoIterator for Poisson<N, RadiusFn, R>
 where
+    RadiusFn: Radius<N>,
     R: Rng + SeedableRng,
 {
     type Item = Point<N>;
-    type IntoIter = Iter<N, R>;
+    type IntoIter = Iter<N, RadiusFn, R>;
 
     fn into_iter(self) -> Self::IntoIter {
         Iter::new(self)
     }
 }
 
-impl<const N: usize, R> IntoIterator for &Poisson<N, R>
-where
-    R: Rng + SeedableRng,
-{
-    type Item = Point<N>;
-    type IntoIter = Iter<N, R>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
 /// For convenience allow converting to a Vec directly from Poisson
-impl<T, const N: usize, R> From<Poisson<N, R>> for Vec<T>
+impl<T, const N: usize, RadiusFn, R> From<Poisson<N, RadiusFn, R>> for Vec<T>
 where
     T: From<[Float; N]>,
+    RadiusFn: Radius<N>,
     R: Rng + SeedableRng,
 {
-    fn from(poisson: Poisson<N, R>) -> Vec<T> {
+    fn from(poisson: Poisson<N, RadiusFn, R>) -> Vec<T> {
         poisson.to_vec()
     }
 }

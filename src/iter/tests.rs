@@ -14,7 +14,7 @@ fn adding_points() {
     let mut iter = Poisson::<2>::new().iter();
     let point = [0.5, 0.5];
 
-    iter.add_point(point);
+    iter.add_point(point, iter.distribution.radius.radius(point).unwrap());
 
     assert!(iter.active.contains(&point));
 
@@ -30,7 +30,12 @@ fn initial_point_not_excluded() {
     for seed in 0..50 {
         let mut iter = Poisson2D::new().with_seed(seed).iter();
         let first_point = iter.active[0];
-        let radius = iter.distribution.radius.powi(2); // Square for performance
+        let radius = iter
+            .distribution
+            .radius
+            .radius(first_point)
+            .unwrap()
+            .powi(2); // Square for performance
         if iter.any(|p| (p[0] - first_point[0]).powi(2) + (p[1] - first_point[1]).powi(2) < radius)
         {
             return;
@@ -55,8 +60,9 @@ fn point_generation_lies_within_radius() {
             .sum::<Float>()
             .sqrt();
 
-        assert!(r > iter.distribution.radius);
-        assert!(r < iter.distribution.radius * 2.);
+        let radius = iter.distribution.radius.radius(point).unwrap();
+        assert!(r > radius);
+        assert!(r < radius * 2.);
     }
 
     let mut iter = Poisson3D::new().iter();
@@ -72,8 +78,9 @@ fn point_generation_lies_within_radius() {
             .sum::<Float>()
             .sqrt();
 
-        assert!(r > iter.distribution.radius);
-        assert!(r < iter.distribution.radius * 2.);
+        let radius = iter.distribution.radius.radius(point).unwrap();
+        assert!(r > radius);
+        assert!(r < radius * 2.);
     }
 }
 
@@ -112,11 +119,13 @@ fn distant_point_has_no_neighbors() {
     iter.sampled = KdTree::new();
 
     // Add test point
-    iter.add_point([0.9, 0.9]);
+    let point = [0.9, 0.9];
+    let radius = iter.distribution.radius.radius(point).unwrap().powi(2);
+    iter.add_point(point, radius);
 
-    assert!(!iter.in_neighborhood([0.1, 0.1]));
-    assert!(!iter.in_neighborhood([0.2, 0.2]));
-    assert!(!iter.in_neighborhood([0.8, 0.8]));
+    assert!(!iter.in_neighborhood([0.1, 0.1], radius));
+    assert!(!iter.in_neighborhood([0.2, 0.2], radius));
+    assert!(!iter.in_neighborhood([0.8, 0.8], radius));
 }
 
 #[test]
@@ -126,8 +135,10 @@ fn point_has_neighbors() {
     iter.sampled = KdTree::new();
 
     // Add test point
-    iter.add_point([0.2, 0.2]);
+    let point = [0.2, 0.2];
+    let radius = iter.distribution.radius.radius(point).unwrap().powi(2);
+    iter.add_point(point, radius);
 
-    assert!(iter.in_neighborhood([0.2, 0.2])); // Same point is a neighbor
-    assert!(iter.in_neighborhood([0.2005, 0.2])); // Close point is a neighbor
+    assert!(iter.in_neighborhood([0.2, 0.2], radius)); // Same point is a neighbor
+    assert!(iter.in_neighborhood([0.2005, 0.2], radius)); // Close point is a neighbor
 }

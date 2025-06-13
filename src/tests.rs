@@ -13,7 +13,6 @@ fn new_is_default() {
     let default = Poisson2D::default();
 
     assert_eq!(new.dimensions, default.dimensions);
-    assert_eq!(new.radius, default.radius);
     assert_eq!(new.seed, default.seed);
     assert_eq!(new.num_samples, default.num_samples);
 }
@@ -57,25 +56,12 @@ fn iter() {
     for _point in poisson.iter() {}
 
     // 4-dimensional distribution
-    let poisson = Poisson4D::new().with_dimensions([1.0; 4], 0.2);
+    let poisson = Poisson4D::new().with_dimensions([1.0; 4], |_| Some(0.2));
     for _point in poisson.iter() {}
 
     // For more than 4 dimensions, use `Poisson` directly:
-    let poisson = Poisson::<7>::new().with_dimensions([1.0; 7], 0.7);
+    let poisson = Poisson::<7>::new().with_dimensions([1.0; 7], |_| Some(0.7));
     for _point in poisson.iter() {}
-}
-
-#[test]
-fn iter_does_not_consume() {
-    let poisson = Poisson::<2>::new();
-
-    for _point in poisson.iter() {}
-
-    for _point in &poisson {}
-
-    for _point in poisson.iter() {}
-
-    for _point in &poisson {}
 }
 
 #[test]
@@ -90,30 +76,4 @@ fn to_vec() {
     let poisson = Poisson2D::new();
 
     let _vec: Vec<[Float; 2]> = poisson.to_vec();
-}
-
-#[test]
-fn poisson_equality() {
-    let mut poisson = Poisson2D::new();
-
-    // No seed has been specified, so it's not equal to itself
-    assert_ne!(poisson, poisson);
-
-    let mut poisson2 = Poisson2D::new();
-
-    // No seed has been specified, so these are not equal
-    assert_ne!(poisson, poisson2);
-
-    poisson.set_seed(1337);
-    poisson2.set_seed(1337);
-
-    // Now with same seed, these are equal
-    assert_eq!(poisson, poisson);
-    assert_eq!(poisson2, poisson2);
-    assert_eq!(poisson, poisson2);
-
-    poisson2.set_dimensions([2.0, 3.0], 0.5);
-
-    // Different dimension, unequal again
-    assert_ne!(poisson, poisson2);
 }
