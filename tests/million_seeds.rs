@@ -19,12 +19,19 @@ fn million_seeds() {
 
         let points_defaults = Poisson2D::new().with_seed(seed).generate();
 
+        // Ensure we test all combintations of wrapping with the two dimensions we have here
+        let index = s % 4;
+        let x_wrapping = index == 1 || index == 3;
+        let y_wrapping = index == 2 || index == 3;
+
         let points = Poisson2D::new()
             .with_dimensions([30.0, 20.0], 5.0)
+            .with_wrapping([x_wrapping, y_wrapping])
             .with_seed(seed)
             .generate();
         let points2 = Poisson2D::new()
             .with_dimensions([30.0, 20.0], 5.0)
+            .with_wrapping([x_wrapping, y_wrapping])
             .with_seed(seed)
             .generate();
 
