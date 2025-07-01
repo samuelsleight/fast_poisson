@@ -178,12 +178,12 @@ where
             for _ in 0..self.distribution.num_samples {
                 // Generate up to `num_samples` random points between radius and 2*radius from the current point
                 let point = self.generate_random_point(self.active[i]);
+                let point = self.wrap_point(point);
 
                 // Ensure we've picked a point inside the bounds of our rectangle, and more than `radius`
                 // distance from any other sampled point
                 if self.in_space(point) && !self.in_neighborhood(point) {
                     // We've got a good one!
-                    let point = self.wrap_point(point);
                     self.add_point(point);
 
                     return Some(point);
